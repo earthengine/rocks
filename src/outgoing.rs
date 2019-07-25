@@ -92,7 +92,7 @@ mod network_errors {
 
 impl DirectOutgoing {
     async fn process_request_impl(self, req: ReqAddr) -> Result<TcpStream, OutgoingError> {
-        let addr = req.resolve_local().map_err(|e| {
+        let addr = req.resolve(self.0).await.map_err(|e| {
             error!("{} {}", req, e);
             OutgoingError::general(e)
         })?;

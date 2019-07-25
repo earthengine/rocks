@@ -90,9 +90,9 @@ async fn main() -> Result<(), failure::Error> {
     let incoming = get_incoming(conf.incoming)?;
     let outgoing = get_outgoing(conf.outgoing, resolver)?;
 
-    tokio::spawn(async move {
-        rf.compat().await.unwrap_or(())
-    });
+    std::thread::spawn(||
+        futures::executor::block_on(rf.compat())
+    );
 
     let brk = future_ext::FlagFuture::default();
     let b = brk.clone();

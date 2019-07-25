@@ -147,51 +147,29 @@ impl Socks5Connected {
         let b0 = buf[4];
         let addr = match atyp {
             SOCKS5_ATYP_IPV4 => {
-                let addr_bytes = &mut buf[5..10];
+                let addr_bytes = &mut buf[5..10];                
                 self.stream.read_exact(addr_bytes).await?;
-                let host = Ipv4Addr::new(b0, addr_bytes[0], addr_bytes[1], addr_bytes[2]);
-                let port = ((addr_bytes[3] as u16) << 8) | (addr_bytes[4] as u16);
-                Ok(ReqAddr::from_addr(SocketAddr::new(IpAddr::V4(host), port)))
+                ReqAddr::parse_address_v4(&buf[4..10])
             }
             SOCKS5_ATYP_IPV6 => {
                 let addr_bytes = &mut buf[5..22];
                 self.stream.read_exact(addr_bytes).await?;
-                let a = ((b0 as u16) << 8) | (addr_bytes[0] as u16);
-                let b = ((addr_bytes[1] as u16) << 8) | (addr_bytes[2] as u16);
-                let c = ((addr_bytes[3] as u16) << 8) | (addr_bytes[4] as u16);
-                let d = ((addr_bytes[5] as u16) << 8) | (addr_bytes[6] as u16);
-                let e = ((addr_bytes[7] as u16) << 8) | (addr_bytes[8] as u16);
-                let f = ((addr_bytes[9] as u16) << 8) | (addr_bytes[10] as u16);
-                let g = ((addr_bytes[11] as u16) << 8) | (addr_bytes[12] as u16);
-                let h = ((addr_bytes[13] as u16) << 8) | (addr_bytes[14] as u16);
-                let host = Ipv6Addr::new(a, b, c, d, e, f, g, h);
-                let port = ((addr_bytes[15] as u16) << 8) | (addr_bytes[16] as u16);
-                Ok(ReqAddr::from_addr(SocketAddr::new(IpAddr::V6(host), port)))
+                ReqAddr::parse_address_v6(&buf[4..22])
             }
             SOCKS5_ATYP_DOMAIN => {
                 let addr_len = b0;
                 let addr = &mut buf[0..addr_len as usize + 2];
                 self.stream.read_exact(addr).await?;
-                let hostname = {
-                    let port_pos: usize = addr_len as usize;
-                    let s = std::str::from_utf8(&addr[0..port_pos])?;
-                    match std::str::from_utf8(&addr[0..port_pos]) {
-                        Ok(hostname) => hostname.to_string(),
-                        Err(e) => {
-                            self.send_final_response(Socks5Error::AddressTypeNotSupported, ReqAddr::default()).await?;
-                            return Err(e.into())
-                        }
-                    }
-                };
-                let port =
-                    ((addr[addr_len as usize] as u16) << 8) | (addr[addr_len as usize + 1] as u16);
-                Ok(ReqAddr::from_domain(hostname, port))
+                ReqAddr::parse_domain(&buf)
             }
             _ => {
                 self.send_final_response(Socks5Error::AddressTypeNotSupported, ReqAddr::default()).await?;
-                bail!("ATYP not recognized")
+                Err(format_err!("ATYP not recognized"))
             }
         };
+        if let Err(_) = addr {
+            self.send_final_response(Socks5Error::AddressTypeNotSupported, ReqAddr::default()).await?;
+        }
         addr
     }
 

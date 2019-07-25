@@ -4,7 +4,7 @@ use crate::outgoing::Outgoing;
 use crate::outgoing::OutgoingError;
 use core::pin::Pin;
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod incoming;

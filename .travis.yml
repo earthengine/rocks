@@ -13,3 +13,6 @@ matrix:
 
 script:
   - cargo build
+
+services:
+  - docker
