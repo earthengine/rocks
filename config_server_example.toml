@@ -1,0 +1,14 @@
+[incoming]
+type = "Socks5"
+userfile = "userfile"
+
+[incoming.listen_addr]
+ip = "127.0.0.1"
+port = 8040
+
+[incoming.ssl]
+keyfile = "keyfile"
+certfile = "certfile"
+
+[outgoing]
+type = "Direct"

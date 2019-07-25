@@ -1,0 +1,15 @@
+language: rust
+sudo: false
+dist: trusty
+
+rust:
+  - nightly
+
+matrix:
+  fast_finish: true
+  include:
+    - rust: nightly
+      sudo: true
+
+script:
+  - cargo build

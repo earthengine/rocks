@@ -1,0 +1,9 @@
+[incoming]
+type = "Socks5"
+
+[incoming.listen_addr]
+ip = "127.0.0.1"
+port = 8443
+
+[outgoing]
+type = "Direct"
