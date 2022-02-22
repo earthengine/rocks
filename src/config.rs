@@ -1,10 +1,7 @@
-use rustls::{internal::pemfile, NoClientAuth, ServerConfig};
-use std::fs::File;
-use std::io::{BufReader, Write};
+use serde_derive::{Deserialize, Serialize};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
-use uuid::Uuid;
 
+use crate::error::Error;
 #[derive(Deserialize, Serialize, Debug)]
 pub struct CfgAddr {
     pub ip: Option<String>,
@@ -12,7 +9,7 @@ pub struct CfgAddr {
     pub port: u16,
 }
 impl CfgAddr {
-    pub fn into_addr(self) -> Result<SocketAddr, failure::Error> {
+    pub fn into_addr(self) -> Result<SocketAddr, Error> {
         match self {
             CfgAddr {
                 ip: Some(ip),
@@ -27,12 +24,10 @@ impl CfgAddr {
                 let addr = format!("{}:{}", domain, port)
                     .to_socket_addrs()?
                     .next()
-                    .ok_or(failure::Error::from(failure::Context::new(
-                        "invalid domain",
-                    )))?;
+                    .ok_or(Error::from_description("invalid domain"))?;
                 Ok(addr)
             }
-            _ => Err(failure::Context::new("invalid address in config").into()),
+            _ => Err(Error::from_description("invalid address in config")),
         }
     }
 }
@@ -73,172 +68,172 @@ pub struct OutgoingConfig {
     pub listen_addr: Option<CfgAddr>,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct Password {
-    pub pass: String,
-}
+// #[derive(Deserialize, Serialize)]
+// pub struct Password {
+//     pub pass: String,
+// }
 #[derive(Deserialize, Serialize)]
 pub struct RocksConfig {
     pub incoming: IncomingConfig,
     pub outgoing: OutgoingConfig,
 }
 
-#[allow(dead_code)]
-enum IncomingCfg {
-    Socks5 {
-        listen_addr: SocketAddr,
-    },
-    Rocks {
-        listen_addr: SocketAddr,
-        ssl: Option<ServerConfig>,
-        userfile: Vec<Uuid>,
-    },
-    Deny,
-    Redirect {
-        listen_addr: SocketAddr,
-        connect_addr: SocketAddr,
-    },
-}
-#[allow(dead_code)]
-pub fn config_rustls_server(
-    key: impl AsRef<str>,
-    cert: impl AsRef<str>,
-) -> Result<ServerConfig, failure::Error> {
-    let f = File::open(key.as_ref())?;
-    let mut br = BufReader::new(f);
-    let k = pemfile::pkcs8_private_keys(&mut br).map_err(|_| format_err!("Invalid key"))?;
-    if k.len() < 1 {
-        bail!("No key in file")
-    }
+// // #[allow(dead_code)]
+// enum IncomingCfg {
+//     Socks5 {
+//         listen_addr: SocketAddr,
+//     },
+//     Rocks {
+//         listen_addr: SocketAddr,
+//         ssl: Option<ServerConfig>,
+//         userfile: Vec<Uuid>,
+//     },
+//     Deny,
+//     Redirect {
+//         listen_addr: SocketAddr,
+//         connect_addr: SocketAddr,
+//     },
+// }
+// #[allow(dead_code)]
+// pub fn config_rustls_server(
+//     key: impl AsRef<str>,
+//     cert: impl AsRef<str>,
+// ) -> Result<ServerConfig, failure::Error> {
+//     let f = File::open(key.as_ref())?;
+//     let mut br = BufReader::new(f);
+//     let k = pemfile::pkcs8_private_keys(&mut br).map_err(|_| format_err!("Invalid key"))?;
+//     if k.len() < 1 {
+//         bail!("No key in file")
+//     }
 
-    let f = File::open(cert.as_ref())?;
-    let mut br = BufReader::new(f);
-    let c = pemfile::certs(&mut br).map_err(|_| format_err!("Invalid certificate"))?;
-    if k.len() < 1 {
-        bail!("Certificate is not valid")
-    }
+//     let f = File::open(cert.as_ref())?;
+//     let mut br = BufReader::new(f);
+//     let c = pemfile::certs(&mut br).map_err(|_| format_err!("Invalid certificate"))?;
+//     if k.len() < 1 {
+//         bail!("Certificate is not valid")
+//     }
 
-    let mut cfg = ServerConfig::new(Arc::new(NoClientAuth));
-    cfg.set_single_cert(c, k[0].clone())?;
-    Ok(cfg)
-}
+//     let mut cfg = ServerConfig::new(Arc::new(NoClientAuth));
+//     cfg.set_single_cert(c, k[0].clone())?;
+//     Ok(cfg)
+// }
 
-#[allow(dead_code)]
-fn write_client_cfg() -> Result<(), failure::Error> {
-    let incoming = IncomingConfig {
-        listen_addr: CfgAddr {
-            ip: Some("127.0.0.1".into()),
-            domain: None,
-            port: 4080,
-        },
-        r#type: IncomingType::Socks5,
-        userfile: None,
-        ssl: None,
-    };
-    let outgoing = OutgoingConfig {
-        r#type: OutgoingType::Rocks,
-        listen_addr: Some(CfgAddr {
-            ip: None,
-            domain: Some("example.com".into()),
-            port: 8040,
-        }),
-        user: Some("user".into()),
-    };
-    let cfg = RocksConfig { incoming, outgoing };
-    let mut f = File::create("config_client_example.toml")?;
+// #[allow(dead_code)]
+// fn write_client_cfg() -> Result<(), failure::Error> {
+//     let incoming = IncomingConfig {
+//         listen_addr: CfgAddr {
+//             ip: Some("127.0.0.1".into()),
+//             domain: None,
+//             port: 4080,
+//         },
+//         r#type: IncomingType::Socks5,
+//         userfile: None,
+//         ssl: None,
+//     };
+//     let outgoing = OutgoingConfig {
+//         r#type: OutgoingType::Rocks,
+//         listen_addr: Some(CfgAddr {
+//             ip: None,
+//             domain: Some("example.com".into()),
+//             port: 8040,
+//         }),
+//         user: Some("user".into()),
+//     };
+//     let cfg = RocksConfig { incoming, outgoing };
+//     let mut f = File::create("config_client_example.toml")?;
 
-    f.write(toml::to_string(&cfg)?.as_bytes())?;
-    Ok(())
-}
-#[allow(dead_code)]
-fn write_server_cfg() -> Result<(), failure::Error> {
-    let incoming = IncomingConfig {
-        listen_addr: CfgAddr {
-            ip: Some("127.0.0.1".into()),
-            domain: None,
-            port: 8040,
-        },
-        r#type: IncomingType::Socks5,
-        userfile: Some("userfile".into()),
-        ssl: Some(SslConfig {
-            keyfile: "keyfile".into(),
-            certfile: "certfile".into(),
-        }),
-    };
-    let outgoing = OutgoingConfig {
-        r#type: OutgoingType::Direct,
-        listen_addr: None,
-        user: None,
-    };
-    let cfg = RocksConfig { incoming, outgoing };
-    let mut f = File::create("config_server_example.toml")?;
+//     f.write(toml::to_string(&cfg)?.as_bytes())?;
+//     Ok(())
+// }
+// #[allow(dead_code)]
+// fn write_server_cfg() -> Result<(), failure::Error> {
+//     let incoming = IncomingConfig {
+//         listen_addr: CfgAddr {
+//             ip: Some("127.0.0.1".into()),
+//             domain: None,
+//             port: 8040,
+//         },
+//         r#type: IncomingType::Socks5,
+//         userfile: Some("userfile".into()),
+//         ssl: Some(SslConfig {
+//             keyfile: "keyfile".into(),
+//             certfile: "certfile".into(),
+//         }),
+//     };
+//     let outgoing = OutgoingConfig {
+//         r#type: OutgoingType::Direct,
+//         listen_addr: None,
+//         user: None,
+//     };
+//     let cfg = RocksConfig { incoming, outgoing };
+//     let mut f = File::create("config_server_example.toml")?;
 
-    f.write(toml::to_string(&cfg)?.as_bytes())?;
-    Ok(())
-}
+//     f.write(toml::to_string(&cfg)?.as_bytes())?;
+//     Ok(())
+// }
 
-#[cfg(test)]
-mod test_config {
-    use crate::config::{
-        write_client_cfg, write_server_cfg, CfgAddr, IncomingConfig, IncomingType, OutgoingConfig,
-        OutgoingType, SslConfig,
-    };
-    #[test]
-    fn test_write_config() {
-        write_client_cfg().unwrap();
-        write_server_cfg().unwrap();
-    }
+// #[cfg(test)]
+// mod test_config {
+//     use crate::config::{
+//         write_client_cfg, write_server_cfg, CfgAddr, IncomingConfig, IncomingType, OutgoingConfig,
+//         OutgoingType, SslConfig,
+//     };
+//     #[test]
+//     fn test_write_config() {
+//         write_client_cfg().unwrap();
+//         write_server_cfg().unwrap();
+//     }
 
-    #[test]
-    fn test_incoming_config() {
-        let incoming = IncomingConfig {
-            listen_addr: CfgAddr {
-                ip: Some("127.0.0.1".into()),
-                domain: None,
-                port: 4080,
-            },
-            r#type: IncomingType::Rocks,
-            userfile: Some("userfile".into()),
-            ssl: Some(SslConfig {
-                keyfile: "keyfile".into(),
-                certfile: "certfile".into(),
-            }),
-        };
-        assert_eq!(
-            toml::to_string(&incoming).unwrap(),
-            r#"type = "Rocks"
-userfile = "userfile"
+//     #[test]
+//     fn test_incoming_config() {
+//         let incoming = IncomingConfig {
+//             listen_addr: CfgAddr {
+//                 ip: Some("127.0.0.1".into()),
+//                 domain: None,
+//                 port: 4080,
+//             },
+//             r#type: IncomingType::Rocks,
+//             userfile: Some("userfile".into()),
+//             ssl: Some(SslConfig {
+//                 keyfile: "keyfile".into(),
+//                 certfile: "certfile".into(),
+//             }),
+//         };
+//         assert_eq!(
+//             toml::to_string(&incoming).unwrap(),
+//             r#"type = "Rocks"
+// userfile = "userfile"
 
-[listen_addr]
-ip = "127.0.0.1"
-port = 4080
+// [listen_addr]
+// ip = "127.0.0.1"
+// port = 4080
 
-[ssl]
-keyfile = "keyfile"
-certfile = "certfile"
-"#
-        );
-    }
-    #[test]
-    fn test_outgoing_config() {
-        let outgoing = OutgoingConfig {
-            r#type: OutgoingType::Rocks,
-            listen_addr: Some(CfgAddr {
-                ip: Some("127.0.0.1".into()),
-                domain: None,
-                port: 8040,
-            }),
-            user: Some("user".into()),
-        };
-        assert_eq!(
-            toml::to_string(&outgoing).unwrap(),
-            r#"type = "Rocks"
-user = "user"
+// [ssl]
+// keyfile = "keyfile"
+// certfile = "certfile"
+// "#
+//         );
+//     }
+//     #[test]
+//     fn test_outgoing_config() {
+//         let outgoing = OutgoingConfig {
+//             r#type: OutgoingType::Rocks,
+//             listen_addr: Some(CfgAddr {
+//                 ip: Some("127.0.0.1".into()),
+//                 domain: None,
+//                 port: 8040,
+//             }),
+//             user: Some("user".into()),
+//         };
+//         assert_eq!(
+//             toml::to_string(&outgoing).unwrap(),
+//             r#"type = "Rocks"
+// user = "user"
 
-[listen_addr]
-ip = "127.0.0.1"
-port = 8040
-"#
-        );
-    }
-}
+// [listen_addr]
+// ip = "127.0.0.1"
+// port = 8040
+// "#
+//         );
+//     }
+// }

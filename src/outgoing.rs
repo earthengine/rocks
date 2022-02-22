@@ -1,54 +1,61 @@
-use crate::config::{OutgoingConfig, OutgoingType};
 use crate::connection::Connection;
-use crate::req_addr::ReqAddr;
-use core::future::Future;
-use failure::{Backtrace, Context, Error, Fail};
+use log::error;
 use std::io::ErrorKind;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 use tokio::net::TcpStream;
-//use tokio::prelude::future::Future as TokioFuture;
-use trust_dns_resolver::AsyncResolver;
 
-#[derive(Fail, Debug)]
+use crate::config::{OutgoingConfig, OutgoingType};
+// use crate::connection::Connection;
+use crate::error::Error;
+use crate::req_addr::ReqAddr;
+// use core::future::Future;
+// use failure::{Backtrace, Context, Error, Fail};
+// use std::io::ErrorKind;
+// use std::pin::Pin;
+// use tokio::net::TcpStream;
+// //use tokio::prelude::future::Future as TokioFuture;
+// use trust_dns_resolver::AsyncResolver;
+
+#[derive(derive_more::Display, Debug)]
 pub enum OutgoingError {
-    #[fail(display = "GeneralFailure {}", _1)]
-    GeneralFailure(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "ConnectionNotAllowed {}", _1)]
-    ConnectionNotAllowed(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "NetworkUnreachable {}", _1)]
-    NetworkUnreachable(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "HostUnreachable {}", _1)]
-    HostUnreachable(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "ConnectionRefused {}", _1)]
-    ConnectionRefused(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "Timed out {}", _1)]
-    TimedOut(Backtrace, #[fail(cause)] Error),
-    #[fail(display = "Unknown {}", _1)]
-    Unknown(Backtrace, #[fail(cause)] Error),
+    #[display(fmt = "GeneralFailure {}", _0)]
+    GeneralFailure(Error),
+    //#[display(fmt = "ConnectionNotAllowed {}", _0)]
+    //ConnectionNotAllowed(Error),
+    #[display(fmt = "NetworkUnreachable {}", _0)]
+    NetworkUnreachable(Error),
+    #[display(fmt = "HostUnreachable {}", _0)]
+    HostUnreachable(Error),
+    #[display(fmt = "ConnectionRefused {}", _0)]
+    ConnectionRefused(Error),
+    #[display(fmt = "Timed out {}", _0)]
+    TimedOut(Error),
+    //#[display(fmt = "Unknown {}", _0)]
+    //Unknown(Error),
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 impl OutgoingError {
     fn general(e: Error) -> Self {
-        OutgoingError::GeneralFailure(Backtrace::new(), e)
+        OutgoingError::GeneralFailure(e)
     }
-    fn connection_not_allowed(e: Error) -> Self {
-        OutgoingError::ConnectionNotAllowed(Backtrace::new(), e)
-    }
+    //     fn connection_not_allowed(e: Error) -> Self {
+    //         OutgoingError::ConnectionNotAllowed(Backtrace::new(), e)
+    //     }
     fn network_unreachable(e: Error) -> Self {
-        OutgoingError::NetworkUnreachable(Backtrace::new(), e)
+        OutgoingError::NetworkUnreachable(e)
     }
     fn host_unreachable(e: Error) -> Self {
-        OutgoingError::HostUnreachable(Backtrace::new(), e)
+        OutgoingError::HostUnreachable(e)
     }
     fn connection_refused(e: Error) -> Self {
-        OutgoingError::ConnectionRefused(Backtrace::new(), e)
+        OutgoingError::ConnectionRefused(e)
     }
     fn timed_out(e: Error) -> Self {
-        OutgoingError::TimedOut(Backtrace::new(), e)
+        OutgoingError::TimedOut(e)
     }
-    fn unknown(e: Error) -> Self {
-        OutgoingError::Unknown(Backtrace::new(), e)
-    }
+    //     fn unknown(e: Error) -> Self {
+    //         OutgoingError::Unknown(Backtrace::new(), e)
+    //     }
 }
 
 pub trait Outgoing: Clone {
@@ -60,7 +67,7 @@ pub trait Outgoing: Clone {
 }
 
 #[derive(Clone, Debug)]
-struct DirectOutgoing(AsyncResolver);
+struct DirectOutgoing;
 impl Outgoing for DirectOutgoing {
     type Stream = TcpStream;
     fn process_request(
@@ -92,9 +99,9 @@ mod network_errors {
 
 impl DirectOutgoing {
     async fn process_request_impl(self, req: ReqAddr) -> Result<TcpStream, OutgoingError> {
-        let addr = req.resolve(self.0).await.map_err(|e| {
+        let addr = req.resolve_local().map_err(|e| {
             error!("{} {}", req, e);
-            OutgoingError::general(e)
+            OutgoingError::HostUnreachable(e)
         })?;
         Ok(TcpStream::connect(&addr).await.map_err(|e| {
             if e.kind() == ErrorKind::ConnectionRefused {
@@ -115,9 +122,9 @@ impl DirectOutgoing {
     }
 }
 
-pub fn get_outgoing(conf: OutgoingConfig, resolver: AsyncResolver) -> Result<impl Outgoing, Error> {
+pub fn get_outgoing<'a>(conf: OutgoingConfig) -> Result<impl Outgoing, Error> {
     match conf.r#type {
-        OutgoingType::Direct => Ok(DirectOutgoing(resolver)),
-        _ => Err(Context::new("Unsupported outgoing type").into()),
+        OutgoingType::Direct => Ok(DirectOutgoing),
+        _ => Err(Error::from_description("Unsupported outgoing type")),
     }
 }

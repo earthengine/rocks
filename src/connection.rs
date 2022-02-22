@@ -1,21 +1,22 @@
-use failure::Error;
-use tokio::prelude::{AsyncRead, AsyncWrite};
-use tokio::{net::TcpStream, io::AsyncReadExt};
-use tokio::net::tcp::split::{TcpStreamReadHalf, TcpStreamWriteHalf};
-
-use crate::future_ext::join;
+use crate::error::Error;
 use crate::req_addr::ReqAddr;
+use log::info;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 pub trait Connection: AsyncRead + AsyncWrite + Send + Unpin {
-    type ReadHalf: AsyncRead + Send + Unpin;
-    type WriteHalf: AsyncWrite + Send + Unpin;
+    type ReadHalf: AsyncRead + Unpin + Send;
+    type WriteHalf: AsyncWrite + Unpin + Send;
     fn l_addr(&self) -> Result<ReqAddr, Error>;
     fn p_addr(&self) -> Result<ReqAddr, Error>;
     fn split(self) -> (Self::ReadHalf, Self::WriteHalf);
 }
+
 impl Connection for TcpStream {
-    type ReadHalf = TcpStreamReadHalf;
-    type WriteHalf = TcpStreamWriteHalf;
+    type ReadHalf = tokio::io::ReadHalf<TcpStream>;
+    type WriteHalf = tokio::io::WriteHalf<TcpStream>;
     fn l_addr(&self) -> Result<ReqAddr, Error> {
         Ok(self.local_addr().map(|addr| ReqAddr::from_addr(addr))?)
     }
@@ -23,11 +24,11 @@ impl Connection for TcpStream {
         Ok(self.peer_addr().map(|addr| ReqAddr::from_addr(addr))?)
     }
     fn split(self) -> (Self::ReadHalf, Self::WriteHalf) {
-        TcpStream::split(self)
+        tokio::io::split(self)
     }
 }
 
-pub async fn copy(incoming: impl Connection, outgoing: impl Connection) -> Result<(), Error> {
+pub async fn bicopy(incoming: impl Connection, outgoing: impl Connection) -> Result<(), Error> {
     let riport = incoming.p_addr()?.port();
     let loport = outgoing.l_addr()?.port();
 
@@ -38,13 +39,18 @@ pub async fn copy(incoming: impl Connection, outgoing: impl Connection) -> Resul
     let (mut rin, mut win) = incoming.split();
     let (mut rout, mut wout) = outgoing.split();
 
-    let i2o = rin.copy(&mut wout);
-    let o2i = rout.copy(&mut win);
-    let (r1, r2) = await!(join(i2o, o2i,));
+    let i2o = tokio::io::copy(&mut rin, &mut wout);
+    let o2i = tokio::io::copy(&mut rout, &mut win);
+    let (r1, r2) = futures::join!(i2o, o2i);
     match (r1, r2) {
-        (Ok(_),Ok(_)) => Ok(()),
-        (Err(e),Ok(_)) => bail!("copy error first half: {}", e),
-        (Ok(_),Err(e)) => bail!("copy error second half: {}", e),
-        (Err(e1),Err(e2)) => bail!("copy error ({}, {})", e1, e2),
+        (Ok(_), Ok(_)) => Ok(()),
+        (Err(e), Ok(_)) => Err(Error::from_description(&format!(
+            "copy error first half: {}",
+            e
+        ))),
+        (_, Err(e)) => Err(Error::from_description(&format!(
+            "copy error second half: {}",
+            e
+        ))),
     }
 }
