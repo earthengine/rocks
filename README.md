@@ -68,6 +68,22 @@ cargo run
 
 (Note: all subsequence `cargo run` will automatically output the log)
 
+# Docker
+
+To make testing easier, a simple Dockerfile was created to test the code in a container.
+
+To build the docker image run
+
+```
+docker build -t rocks:latest .
+```
+
+To run a docker container run
+
+```
+docker run -p 8443:8443 rocks:latest
+```
+
 # Contribute
 
 Please let me know your thoughts or advises. You can post them in the issues. Thank you very much!

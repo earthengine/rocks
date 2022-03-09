@@ -1,7 +1,4 @@
-FROM rust:1.36
-
-RUN rustup install nightly
-RUN rustup default nightly
+FROM rust:1.59
 
 ENV RUST_LOG="rocks=debug"
 
