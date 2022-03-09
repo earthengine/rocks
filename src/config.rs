@@ -2,7 +2,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use crate::error::Error;
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CfgAddr {
     pub ip: Option<String>,
     pub domain: Option<String>,
@@ -48,7 +48,7 @@ pub struct IncomingConfig {
     pub ssl: Option<SslConfig>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub enum OutgoingType {
     Rocks,
     Direct,
@@ -61,7 +61,7 @@ pub struct SslConfig {
     pub certfile: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct OutgoingConfig {
     pub r#type: OutgoingType,
     pub user: Option<String>,

@@ -9,6 +9,7 @@ pub enum Error {
     Description(String),
     Outgoing(Box<OutgoingError>),
     Utf8(Utf8Error),
+    NotConnected,
     #[display(fmt = "Invalid SOCKS5 address type")]
     InvalidSocks5AddrType,
 }

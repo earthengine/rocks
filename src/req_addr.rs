@@ -1,6 +1,3 @@
-// use failure::Error;
-// use futures::compat::Future01CompatExt;
-// use failure::Context;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use log::debug;

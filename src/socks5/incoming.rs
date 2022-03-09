@@ -1,102 +1,80 @@
-use log::{debug, error, info};
+use log::{debug, info};
+use std::convert::TryFrom;
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::connection::{bicopy, Connection};
+use crate::incoming::{Incoming, IncomingClient};
 use crate::outgoing::OutgoingError;
 use crate::socks5::{
     Socks5AddrType, Socks5Error, SOCKS5_CMD_CONNECT, SOCKS5_NO_ACCEPTABLE_METHOD, SOCKS5_NO_AUTH,
     SOCKS5_PROTOCOL,
 };
-use crate::{
-    config::CfgAddr, error::Error, incoming::Incoming, outgoing::Outgoing, req_addr::ReqAddr,
-};
-use std::convert::TryFrom;
-use std::{future::Future, net::SocketAddr, pin::Pin};
+use crate::{config::CfgAddr, error::Error, req_addr::ReqAddr, StandardFuture};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Socks5Incoming {
     listen_addr: SocketAddr,
+    listener: TcpListener,
 }
 
-struct Socks5Connected {
+pub struct Socks5Connected {
     _local_addr: SocketAddr,
     _remote_addr: SocketAddr,
-    stream: TcpStream,
+    stream: Option<TcpStream>,
+}
+impl IncomingClient for Socks5Connected {
+    type Connection = TcpStream;
+    fn next_request<'a>(&'a mut self) -> StandardFuture<'a, ReqAddr, Error> {
+        Box::pin(async move {
+            self.authenticate_client().await?;
+            self.get_request().await
+        })
+    }
+    fn abort(mut self, err: OutgoingError, req: ReqAddr) -> StandardFuture<'static, (), Error> {
+        let reason = self.get_reason(&err);
+        Box::pin(async move { self.send_final_response(reason, req).await })
+    }
+    fn ready_for_connect<'a>(
+        &'a mut self,
+        req: ReqAddr,
+    ) -> StandardFuture<'a, Self::Connection, Error> {
+        Box::pin(async move {
+            self.send_final_response(Socks5Error::Success, req).await?;
+            let stream = self.stream.take().unwrap();
+            Ok(stream)
+        })
+    }
 }
 
-impl<'a> Incoming for Socks5Incoming {
-    fn start<O>(self, outgoing: O) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>
-    where
-        O: Outgoing + Send + 'static,
-    {
-        Box::pin(self.start_impl(outgoing))
+impl Incoming for Socks5Incoming {
+    type Client = Socks5Connected;
+    fn next_client<'a>(&'a mut self) -> StandardFuture<'a, Self::Client, Error> {
+        Box::pin(self.next_client_impl())
     }
 }
 
 impl Socks5Incoming {
-    pub fn from_cfg(conf: CfgAddr) -> Result<Self, Error> {
+    pub async fn from_cfg(conf: CfgAddr) -> Result<Self, Error> {
+        let listen_addr = conf.into_addr()?;
         Ok(Socks5Incoming {
-            listen_addr: conf.into_addr()?,
+            listen_addr,
+            listener: TcpListener::bind(listen_addr).await?,
         })
     }
-    async fn start_impl<O>(self, outgoing: O) -> Result<(), Error>
-    where
-        O: Outgoing + Send + 'static,
-    {
-        let listener = TcpListener::bind(&self.listen_addr).await?;
-        info!("listening at {:?}", self.listen_addr);
-
-        loop {
-            let (stream, incoming_addr) = listener.accept().await?;
-            info!("incoming!");
-            let st = Socks5Connected {
-                _local_addr: self.listen_addr,
-                _remote_addr: incoming_addr,
-                stream,
-            };
-            let o = outgoing.clone();
-            tokio::spawn(async move {
-                st.handle_client(o)
-                    .await
-                    .map_err(|e| error!("{}", e))
-                    .unwrap_or(())
-            });
-        }
+    async fn next_client_impl<'a>(&'a mut self) -> Result<Socks5Connected, Error> {
+        let (stream, incoming_addr) = self.listener.accept().await?;
+        info!("incoming!");
+        let st = Socks5Connected {
+            _local_addr: self.listen_addr,
+            _remote_addr: incoming_addr,
+            stream: Some(stream),
+        };
+        Ok(st)
     }
 }
 
 impl Socks5Connected {
-    pub async fn handle_client<O>(mut self, outgoing: O) -> Result<(), Error>
-    where
-        O: Outgoing + Send + 'static,
-    {
-        let o = outgoing.clone();
-        self.authenticate_client().await?;
-        info!("client authenticated");
-        let req = self.get_request().await?;
-        info!("request processed");
-        match o.process_request(req.clone()).await {
-            Ok(outgoing_stream) => {
-                let addr = outgoing_stream.p_addr();
-                match addr {
-                    Ok(addr) => self.send_final_response(Socks5Error::Success, addr).await?,
-                    Err(e) => {
-                        self.send_final_response(Socks5Error::GeneralProxyFailure, req)
-                            .await?;
-                        Err(e)?
-                    }
-                };
-                bicopy(self.stream, outgoing_stream).await?;
-            }
-            Err(e) => {
-                self.send_final_response(self.get_reason(&e), req).await?;
-                Err(Box::new(e))?
-            }
-        };
-        Ok(())
-    }
-
     fn get_reason(&self, err: &OutgoingError) -> Socks5Error {
         match err {
             OutgoingError::GeneralFailure(..) => Socks5Error::GeneralProxyFailure,
@@ -109,10 +87,23 @@ impl Socks5Connected {
         }
     }
 
+    async fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> Result<usize, Error> {
+        match self.stream.as_mut() {
+            Some(stream) => Ok(stream.read_exact(buf).await?),
+            None => Err(Error::NotConnected),
+        }
+    }
+    async fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+        match self.stream.as_mut() {
+            Some(stream) => Ok(stream.write_all(buf).await?),
+            None => Err(Error::NotConnected),
+        }
+    }
+
     async fn authenticate_client(&mut self) -> Result<(), Error> {
         let mut buf = [0u8; 256];
         info!("authenticate client");
-        self.stream.read_exact(&mut buf[0..2]).await?;
+        self.read_exact(&mut buf[0..2]).await?;
         let p = buf[0];
         if p != SOCKS5_PROTOCOL {
             Err(Error::from_description(&format!(
@@ -122,31 +113,27 @@ impl Socks5Connected {
         }
 
         let num_auth_methods = buf[1];
-        self.stream
-            .read_exact(&mut buf[0..num_auth_methods as usize])
+        self.read_exact(&mut buf[0..num_auth_methods as usize])
             .await?;
         let authenticate_methods = &mut buf[0..num_auth_methods as usize];
         if !authenticate_methods.contains(&SOCKS5_NO_AUTH) {
-            self.stream
-                .write_all(&[SOCKS5_PROTOCOL, SOCKS5_NO_ACCEPTABLE_METHOD])
+            self.write_all(&[SOCKS5_PROTOCOL, SOCKS5_NO_ACCEPTABLE_METHOD])
                 .await?;
             Err(Error::from_description("No supported method given"))?;
         }
         info!(
             "client authenticate successfully ({} -> {})",
-            self.stream.l_addr()?,
-            self.stream.p_addr()?
+            self._remote_addr, self._local_addr,
         );
-        self.stream
-            .write_all(&[SOCKS5_PROTOCOL, SOCKS5_NO_AUTH])
-            .await?;
+        self.write_all(&[SOCKS5_PROTOCOL, SOCKS5_NO_AUTH]).await?;
+        info!("wrote auth response");
         Ok(())
     }
 
     pub async fn get_request(&mut self) -> Result<ReqAddr, Error> {
         let mut buf = [0; 255];
 
-        self.stream.read_exact(&mut buf[0..5]).await?;
+        self.read_exact(&mut buf[0..5]).await?;
 
         let p = buf[0];
         if p != SOCKS5_PROTOCOL {
@@ -168,18 +155,18 @@ impl Socks5Connected {
         let addr = match Socks5AddrType::try_from(atyp) {
             Ok(Socks5AddrType::IPV4) => {
                 let addr_bytes = &mut buf[5..10];
-                self.stream.read_exact(addr_bytes).await?;
+                self.read_exact(addr_bytes).await?;
                 ReqAddr::parse_address_v4(&buf[4..10])
             }
             Ok(Socks5AddrType::IPV6) => {
                 let addr_bytes = &mut buf[5..22];
-                self.stream.read_exact(addr_bytes).await?;
+                self.read_exact(addr_bytes).await?;
                 ReqAddr::parse_address_v6(&buf[4..22])
             }
             Ok(Socks5AddrType::DOMAIN) => {
                 let addr_len = b0;
                 let addr = &mut buf[0..addr_len as usize + 2];
-                self.stream.read_exact(addr).await?;
+                self.read_exact(addr).await?;
                 let r = ReqAddr::parse_domain(addr_len as usize, addr);
                 debug!("domain: {}", r.as_ref().unwrap());
                 r
@@ -228,7 +215,7 @@ impl Socks5Connected {
         };
         resp[pos] = (addr.port() >> 8) as u8;
         resp[pos + 1] = addr.port() as u8;
-        self.stream.write_all(&resp[0..pos + 2]).await?;
+        self.write_all(&resp[0..pos + 2]).await?;
         info!("final response sent code:{}", err);
         Ok(())
     }

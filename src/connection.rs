@@ -41,8 +41,7 @@ pub async fn bicopy(incoming: impl Connection, outgoing: impl Connection) -> Res
 
     let i2o = tokio::io::copy(&mut rin, &mut wout);
     let o2i = tokio::io::copy(&mut rout, &mut win);
-    let (r1, r2) = futures::join!(i2o, o2i);
-    match (r1, r2) {
+    match futures::join!(i2o, o2i) {
         (Ok(_), Ok(_)) => Ok(()),
         (Err(e), Ok(_)) => Err(Error::from_description(&format!(
             "copy error first half: {}",

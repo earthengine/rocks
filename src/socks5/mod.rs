@@ -1,7 +1,8 @@
-mod incoming;
 use std::convert::TryFrom;
 
 pub(crate) use incoming::Socks5Incoming;
+
+mod incoming;
 
 use crate::error::Error;
 

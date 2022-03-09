@@ -58,7 +58,7 @@ impl OutgoingError {
     //     }
 }
 
-pub trait Outgoing: Clone {
+pub trait Outgoing {
     type Stream: Connection + Send;
     fn process_request(
         self,
@@ -122,7 +122,7 @@ impl DirectOutgoing {
     }
 }
 
-pub fn get_outgoing<'a>(conf: OutgoingConfig) -> Result<impl Outgoing, Error> {
+pub fn get_outgoing<'a>(conf: OutgoingConfig) -> Result<impl Outgoing + Send, Error> {
     match conf.r#type {
         OutgoingType::Direct => Ok(DirectOutgoing),
         _ => Err(Error::from_description("Unsupported outgoing type")),
