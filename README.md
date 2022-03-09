@@ -67,3 +67,7 @@ cargo run
 ```
 
 (Note: all subsequence `cargo run` will automatically output the log)
+
+# Contribute
+
+Please let me know your thoughts or advises. You can post them in the issues. Thank you very much!
